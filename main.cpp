@@ -1,5 +1,8 @@
 #include <iostream>
 #include <cstdio>
+#include <vector>
+#include <map>
+#include "llvm/ADT/STLExtras.h"
 
 using namespace std;
 
@@ -18,7 +21,7 @@ enum Token {
 };
 
 static string IdentifierStr;    //will hold the token name if it is tok_identifier
-static double NumberVal;    //will hold the token number value if it is tok_number
+static double NumVal;    //will hold the token number value if it is tok_number
 
 //return the next token from stdin
 static int gettok(){
@@ -80,9 +83,274 @@ static int gettok(){
     return ThisChar;
 }
 
+/*
+ * Expression Abastract Syntax Tree
+ */
+class ExprAST {
+public:
+    virtual ~ExprAST();
+};
+
+/*
+ * Number expression for such as '1.0'
+ */
+class NumberExprAST : public ExprAST {
+    double Val;
+
+public:
+    NumberExprAST(double val) : Val(val) {}
+};
+
+/*
+ * Variable expression for such as 'a'
+ */
+class VariableExprAST : public ExprAST {
+    string Name;
+
+public:
+    VariableExprAST(const string &name) : Name(name) {}
+};
+
+/*
+ * Binary expression for such as '+'
+ */
+
+class BinaryExprAST : public ExprAST {
+    char Op;
+    unique_ptr<ExprAST> LHS,RHS;//Left hand side and right hand side op
+
+public:
+    BinaryExprAST(char op, unique_ptr<ExprAST> lhs, unique_ptr<ExprAST> rhs)
+            : Op(op), LHS(std::move(lhs)), RHS(std::move(rhs)) {}
+};
+
+/*
+ * Call expression for function call such as 'add()'
+ */
+
+class CallExprAST : public ExprAST {
+    string Callee;  //callee function name
+    vector<unique_ptr<ExprAST>> Args;
+
+public:
+    CallExprAST(const string &callee, vector<unique_ptr<ExprAST>> args)
+            : Callee(callee), Args(std::move(args)) {}
+};
+
+/*
+ * Prototype of function, include function name and args
+ * Just now all function args are all double, so don't need type filed
+ */
+
+class PrototypeAST {
+    string Name;
+    vector<string> Args;
+
+public:
+    PrototypeAST(const string &name, vector<string> args)
+            : Name(name), Args(std::move(args)) {}
+};
+
+/*
+ * Body of function, include function prototype and body expression
+ */
+class FunctionAST {
+    unique_ptr<PrototypeAST> Proto;
+    unique_ptr<ExprAST> Body;
+
+public:
+    FunctionAST(unique_ptr<PrototypeAST> proto, unique_ptr<ExprAST> body)
+            : Proto(std::move(proto)), Body(std::move(body)) {}
+};
+
+
+
+
+
+/*
+ * Base expression parse
+ */
+static int CurTok;  //Current token
+static int getNextToken() { //Get next token and update CurTok
+    return CurTok = gettok();
+}
+
+/*
+ * Handle error token
+ */
+unique_ptr<ExprAST> Error(const char *Str) {
+    fprintf(stderr, "Error:%s\n", Str);
+    return nullptr;
+}
+
+unique_ptr<PrototypeAST> ErrorP(const char *Str) {
+    Error(Str);
+    return nullptr;
+}
+
+/*
+ * Parse number ::= number
+ */
+static unique_ptr<ExprAST> ParseNumberExpr() {
+    auto Result = llvm::make_unique<NumberExprAST>(NumVal);
+    getNextToken();
+    return std::move(Result);
+}
+
+/*
+ * Define parse binary expression, see later
+ */
+static unique_ptr<ExprAST> ParseExpression();
+
+/*
+ * Parse paren ::= '(' expression ')'
+ */
+static unique_ptr<ExprAST> ParseParenExpr() {
+    getNextToken(); //Eat '('
+    auto Result = ParseExpression();
+    if (!Result) {
+        return nullptr;
+    }
+
+    if (CurTok != ')') {
+        return Error("excepted ')'");
+    }
+
+    getNextToken();//Eat ')'
+    return Result;
+}
+
+/*
+ * Parse identifier ::= identifier
+ * ::= identifier '(' expression* ')'
+ */
+static unique_ptr<ExprAST> ParseIndentifierExpr() {
+    string IdName = IdentifierStr;
+
+    getNextToken(); //Eat identifier
+
+    if (CurTok != '(') {    //Look ahead, if it's a variable reference return VariableExprAST
+        return llvm::make_unique<VariableExprAST>(IdName);
+    }
+
+    //Else is a function call and should return CallExprAST
+    getNextToken(); //Eat '('
+    vector<unique_ptr<ExprAST>> Args;
+    if (CurTok != ')') {
+        while (true) {  //Parse all the args
+            if (auto Arg = ParseExpression()) {
+                Args.push_back(std::move(Arg));
+            }
+            else {
+                return nullptr;
+            }
+
+            if (CurTok == ')') break;   //End
+
+            if (CurTok != ',') {
+                return Error("Excepted ')' or ',' in arguments");
+            }
+
+            getNextToken(); //Eat ',' to next arg
+        }
+    }
+
+    getNextToken(); //Eat ')'
+
+    return llvm::make_unique<CallExprAST>(IdName, std::move(Args));
+}
+
+/*
+ * Parse primary of expression ::= indentifier
+ * ::= numberexpr
+ * ::= parenexpr
+ */
+static unique_ptr<ExprAST> ParsePrimary() {
+    switch (CurTok) {
+        default:
+            return Error("Unkown token when excepting an expression");
+        case tok_identifier:
+            return ParseIndentifierExpr();
+        case tok_number:
+            return ParseNumberExpr();
+        case '(':   //In order to parse precedence
+            return ParseParenExpr();
+    }
+}
+
+
+
+
+/*
+ * Binary expression parse
+ */
+
+
+static map<char ,int> BinoPrecedence;   //Hold precedence for each binary ops
+
+/*
+ * Get the precedence of an op
+ */
+static int GetTokPrecedence() {
+    if (!isascii(CurTok)) { //Not a ASCII op, set to -1
+        return -1;
+    }
+
+    int TokPrec = BinoPrecedence[CurTok];
+    if (TokPrec < 0) {  //Unknown binary op, set to -1
+        return -1;
+    }
+    return TokPrec;
+}
+
+/*
+ * Define parse binary with precedence
+ */
+static unique_ptr<ExprAST> ParseBinOpRHS(int ,unique_ptr<ExprAST>);
+
+/*
+ * Parse binary expression entry
+ * For ops like "a+b+(c+d)", we should split ops into pairs like [+ b], [+ (c+d)]
+ * So we should firstly parse the LHS use ParsePrimary() to parse 'a'
+ * Attention that one op like 'x' is also valid
+ */
+static unique_ptr<ExprAST> ParseExpression() {
+    auto LHS = ParsePrimary();
+    if (!LHS) { //Not a expression
+        return nullptr;
+    }
+
+    return ParseBinOpRHS(0, std::move(LHS));
+}
+
+/*
+ * Parse binary expression with precedence
+ * ::= ('+' primary)*
+ */
+static unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec, unique_ptr<ExprAST> LHS) {
+    while (true) {
+        int TokPrec = GetTokPrecedence();
+
+        if (TokPrec < ExprPrec) {   //
+            return LHS;
+        }
+    }
+}
+
 
 
 int main() {
-    cout << "Hello, World!" << endl;
+    BinoPrecedence['<'] = 10;
+    BinoPrecedence['>'] = 10;
+    BinoPrecedence['+'] = 20;
+    BinoPrecedence['-'] = 20;
+    BinoPrecedence['*'] = 40;
+    BinoPrecedence['/'] = 40;
+
+    fprintf(stdout, "input>> ");
+    getNextToken();
+
+//    MainLoop();
+
     return 0;
 }

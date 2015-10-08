@@ -11,4 +11,6 @@ set(SOURCE_FILES
     main.cpp
     README.md)
 
+include_directories(/usr/local/opt/llvm/include)
+
 add_executable(kaleidoscope ${SOURCE_FILES})
