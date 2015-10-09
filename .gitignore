@@ -27,5 +27,9 @@
 *.out
 *.app
 
-# IDEA
+# CLion folder
 .idea
+
+# Compiler product and dSYM
+test/build/
+*.dSYM
