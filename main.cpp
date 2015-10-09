@@ -118,6 +118,7 @@ public:
 class BinaryExprAST : public ExprAST {
     char Op;
     unique_ptr<ExprAST> LHS,RHS;//Left hand side and right hand side op
+    //AST will use node to left child and right child
 
 public:
     BinaryExprAST(char op, unique_ptr<ExprAST> lhs, unique_ptr<ExprAST> rhs)
@@ -312,7 +313,7 @@ static unique_ptr<ExprAST> ParseBinOpRHS(int ,unique_ptr<ExprAST>);
  * Parse binary expression entry
  * For ops like "a+b+(c+d)", we should split ops into pairs like [+ b], [+ (c+d)]
  * So we should firstly parse the LHS use ParsePrimary() to parse 'a'
- * Attention that one op like 'x' is also valid
+ * Attention that one op like single 'x' is also valid
  */
 static unique_ptr<ExprAST> ParseExpression() {
     auto LHS = ParsePrimary();
@@ -328,16 +329,114 @@ static unique_ptr<ExprAST> ParseExpression() {
  * ::= ('+' primary)*
  */
 static unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec, unique_ptr<ExprAST> LHS) {
+    /*
+     * While is hard to understand,take ops exmaple "a+b+(c+d)*e*f+g" to explain
+     * First the ops will be split into [a] [+, b] [+, (c+d)] [*, e] [*, f] [+, g]
+     * Paren will use ParseParen() to process recursion call
+     */
     while (true) {
         int TokPrec = GetTokPrecedence();
 
-        if (TokPrec < ExprPrec) {   //
+        /*
+         * Ignore wrong op or the single op and the first op(example [a])
+         * At first time the ExprPrec is 0 and only -1 will go into this
+         */
+        if (TokPrec < ExprPrec) {
             return LHS;
         }
+
+        /*
+         * Now the ops are all valid and in pairs
+         * Example [+, b] [+, (c+d)] [*, e] [*, f] [+, g]
+         */
+        int BinOp = CurTok; //Save current token
+        getNextToken(); //Eat op and to next token
+
+        auto RHS = ParsePrimary();  //Get RHS
+        if (!RHS) {
+            return nullptr;
+        }
+
+        /*
+         * Now we have LHS and RHS, example is [+ b] and [+ op unparsed]
+         * First to look ahead to judge "(a+b) op unparsed" or "a+(b op unparsed)"
+         */
+        int NextPrec = GetTokPrecedence();
+
+        /*
+         * RHS > current, like "a+(b op unparsed)"
+         * Show [LHS] and [RHS]
+         * First time: [a] and [+ b], equal, skip and make AST node
+         * Second time: [a+b] and [+ (c+d)], equal, skip and make AST node
+         * Third time: [a+b+] and [(c+d)], paren process to recursion call{
+         *     First time: [c] [+ d]: equal, skip and make AST node
+         *     Second time: [c+d] [* e]: '+' < '*', go into if condition
+         *     Third time: [(c+d)*e] [* f]: equal, skip and make AST node
+         *     Forth time: [(c+d)*e*f] [end]: end and return
+         * }
+         * Forth time: [a+b+(c+d)*e*f] [end]: end and return
+         */
+        if (NextPrec > TokPrec) {
+            /*
+             * Recursion call to set all rest RHS as current LHS
+             * TokPrec + 1 to ignore that "if (TokPrec < ExprPrec) return LHS;"
+             * Example: [(c+d)*e*f] as RHS
+             */
+            RHS = ParseBinOpRHS(TokPrec + 1, std::move(RHS));
+            if (!RHS) {
+                return nullptr;
+            }
+        }
+        /*
+         * RHS  <= current, like "(a+b) op unparsed", create AST and continue
+         */
+
+        //Update LHS and use while loop to process next ops pair
+        LHS = llvm::make_unique<ExprAST>(BinOp, std::move(LHS), std::move(RHS));
     }
 }
 
+static void HandleExtern() {
+  if (ParseExtern()) {
+    fprintf(stderr, "Parsed an extern\n");
+  } else {
+    // Skip token for error recovery.
+    getNextToken();
+  }
+}
 
+static void HandleTopLevelExpression() {
+  // Evaluate a top-level expression into an anonymous function.
+  if (ParseTopLevelExpr()) {
+    fprintf(stderr, "Parsed a top-level expr\n");
+  } else {
+    // Skip token for error recovery.
+    getNextToken();
+  }
+}
+
+/// top ::= definition | external | expression | ';'
+static void MainLoop() {
+  while (1) {
+    fprintf(stderr, "ready> ");
+    switch (CurTok) {
+    case tok_eof:
+      return;
+    case ';': // ignore top-level semicolons.
+      getNextToken();
+      break;
+    case tok_def:
+      HandleDefinition();
+      break;
+    case tok_extern:
+      HandleExtern();
+      break;
+    default:
+      HandleTopLevelExpression();
+      break;
+    }
+  }
+}
 
 int main() {
     BinoPrecedence['<'] = 10;
