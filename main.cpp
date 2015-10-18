@@ -1,8 +1,9 @@
-#include <iostream>
-#include <cstdio>
-#include <vector>
-#include <map>
 #include "llvm/ADT/STLExtras.h"
+#include <cctype>
+#include <cstdio>
+#include <map>
+#include <string>
+#include <vector>
 
 using namespace std;
 
@@ -82,13 +83,13 @@ static int gettok(){
     LastChar = getchar();
     return ThisChar;
 }
-
+namespace {
 /*
  * Expression Abastract Syntax Tree
  */
 class ExprAST {
 public:
-    virtual ~ExprAST();
+    virtual ~ExprAST() {};
 };
 
 /*
@@ -164,7 +165,7 @@ public:
             : Proto(std::move(proto)), Body(std::move(body)) {}
 };
 
-
+}   //End of namespace
 
 
 
@@ -392,9 +393,93 @@ static unique_ptr<ExprAST> ParseBinOpRHS(int ExprPrec, unique_ptr<ExprAST> LHS) 
          */
 
         //Update LHS and use while loop to process next ops pair
-        LHS = llvm::make_unique<ExprAST>(BinOp, std::move(LHS), std::move(RHS));
+        LHS = llvm::make_unique<BinaryExprAST>(BinOp, std::move(LHS), std::move(RHS));
     }
 }
+
+/*
+ * Prototype of function handler, means 'def fib(x)' the 'fib(x)' part
+ * ::= id '(' id* ')'
+ */
+static unique_ptr<PrototypeAST> ParsePrototype() {
+    if (CurTok != tok_identifier) {
+        return ErrorP("Excepted function name in prototype");
+    }
+
+    string FnName = IdentifierStr;
+    getNextToken();
+
+    if (CurTok != '(') {
+        return ErrorP("Excepted '(' in prototype");
+    }
+
+    vector<string> ArgNames;
+    //If next token is an identifier, it must be a function call, get all the args
+    while (getNextToken() == tok_identifier) {
+        ArgNames.push_back(IdentifierStr);
+    }
+
+    if (CurTok != ')') {
+        return ErrorP("Expected ')' in prototype");
+    }
+
+    //Success
+    getNextToken();
+
+    return llvm::make_unique<PrototypeAST>(FnName, std::move(ArgNames));
+}
+
+/*
+ * Parse function definition
+ */
+static std::unique_ptr<FunctionAST> ParseDefinition() {
+    getNextToken();
+    auto Proto = ParsePrototype();
+    if (!Proto) {
+        return nullptr;
+    }
+
+    //Parse function expression
+    if (auto E = ParseExpression()) {
+        return llvm::make_unique<FunctionAST>(std::move(Proto), std::move(E));
+    }
+    return nullptr;
+}
+
+
+/*
+ * External ::= 'extern' prototype
+ */
+static unique_ptr<PrototypeAST> ParseExtern() {
+    getNextToken();
+    return ParsePrototype();    //extern is just a prototype with no body(anonymous)
+}
+
+
+/*
+ * External for top level process
+ */
+static unique_ptr<FunctionAST> ParseTopLevelExpr() {
+    if (auto E = ParseExpression()) {
+        //Expression is a prototype of empty function name and args
+        auto Proto = llvm::make_unique<PrototypeAST>("", vector<string>());
+        return llvm::make_unique<FunctionAST>(std::move(Proto), std::move(E));
+    }
+    return nullptr;
+}
+
+/*
+ * Handle top level tok of function 'def', 'extern'
+ */
+static void HandleDefinition() {
+    if (ParseDefinition()) {
+        fprintf(stderr, "Parsed a function definition.\n");
+    } else {
+        // Skip token for error recovery.
+        getNextToken();
+    }
+}
+
 
 static void HandleExtern() {
   if (ParseExtern()) {
@@ -415,24 +500,28 @@ static void HandleTopLevelExpression() {
   }
 }
 
-/// top ::= definition | external | expression | ';'
+
+/*
+ * Mainloop to handle all def extern and expression
+ * top ::= definition | external | expression | ';'
+ */
 static void MainLoop() {
   while (1) {
-    fprintf(stderr, "ready> ");
+    fprintf(stdout, "input>> ");
     switch (CurTok) {
-    case tok_eof:
+    case tok_eof:   //EOF to return 0
       return;
-    case ';': // ignore top-level semicolons.
+    case ';': // Ignore top-level semicolons.
       getNextToken();
       break;
-    case tok_def:
+    case tok_def:   //Handle function definition
       HandleDefinition();
       break;
-    case tok_extern:
+    case tok_extern:    //Handle external definition
       HandleExtern();
       break;
     default:
-      HandleTopLevelExpression();
+      HandleTopLevelExpression();   //Handle expression
       break;
     }
   }
@@ -449,7 +538,7 @@ int main() {
     fprintf(stdout, "input>> ");
     getNextToken();
 
-//    MainLoop();
+    MainLoop();
 
     return 0;
 }

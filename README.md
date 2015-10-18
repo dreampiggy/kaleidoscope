@@ -25,23 +25,20 @@ curl "http://llvm.org/releases/3.7.0/clang+llvm-3.7.0-x86_64-apple-darwin.tar.xz
 tar -xvf ./clang+llvm-3.7.0-x86_64-apple-darwin.tar.xz
 mv clang+llvm-3.7.0-x86_64-apple-darwin.tar.xz llvm/3.7.0
 cd /usr/local/opt
-ln ../Cellar/llvm/3.7.0 llvm
+ln -s ../Cellar/llvm/3.7.0 llvm
 ```
 
-and then add to your `PATH`.
-
-> for OS X, because Xcode built-in clang-llvm, so you must add it to path or brew link to do that
-> 
-> for Linux, just add it to PATH
-
-```bash
-export PATH=$PATH:/usr/local/opt/llvm
-```
-or
+> Alternative. If you don't use CMake, please use make or add all LLVM include files to your `$PATH`.
 
 ```bash
 brew link llvm --force
 ```
+or
+
+```bash
+export PATH=$PATH:/usr/local/opt/llvm
+```
+
 
 ### 2. Build
 
